@@ -1,0 +1,233 @@
+const SUB_SPREADSHEET = "Substitute Teacher Requests";
+const REQUESTS_SHEET_NAME = "Requests";
+const NOTIFICATION_SHEET_NAME = "Notification Configuration";
+const STAFF_NAMES_SHEET_NAME = "Staff Names";
+
+function main() {
+  const sheetFile = Utilities.findGoogleDocFile(SUB_SPREADSHEET);
+  if (sheetFile != null) {
+    const spreadSheet = SpreadsheetApp.open(sheetFile);
+
+    const notifDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(NOTIFICATION_SHEET_NAME));
+
+    const notifConfigs = [];
+    for (dataColumns of notifDataValues) {
+      notifConfigs.push(new Notification(dataColumns));
+    }
+
+    const staffDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(STAFF_NAMES_SHEET_NAME));
+
+    const sheet = spreadSheet.getSheetByName(REQUESTS_SHEET_NAME);
+    const entireRange = sheet.getDataRange();
+    const headingRange = entireRange.offset(0, 0, 1, entireRange.getNumColumns());
+    const headingRow = headingRange.getValues()[0];
+
+    //Convert all rows in REQUESTS_SHEET_NAME range to a RequestRowMap[].
+    const requestRows = [];
+    for (let rowNum = 1; rowNum < entireRange.getNumRows(); rowNum++) {
+      let currentRange = entireRange.offset(rowNum, 0, 1, entireRange.getNumColumns());
+      requestRows.push(new RequestRowMap(headingRow, currentRange));
+    }
+
+    const notificationManager = new NotificationManager(notifConfigs, staffDataValues);
+
+    //sendNotifications() for every requestRow whose "Notification Sent" is not Yes.
+    for (let requestRow of requestRows) {
+      let notificationSent = requestRow.getColumnFor("Notification Sent");
+      if (notificationSent != undefined && notificationSent != "Yes") {
+        notificationManager.sendNotifications(requestRow);
+      }
+    }
+  }
+}
+
+function sendEmail(sendTo, body) {
+  message = {
+    to: sendTo,
+    subject: "Substitute Teacher Request Status",
+    body: body,
+    noReply: true
+  };
+  MailApp.sendEmail(message);
+  Logger.log(`Email sent to ${sendTo}: ${body}`);
+}
+
+function getDataValuesForSheet(sheet) {
+  const entireRange = sheet.getDataRange();
+  //Data range below the header.
+  const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, entireRange.getNumColumns());
+  return dataRange.getValues();
+}
+
+/**
+ * Represents a row. Use getColumnFor() to get the value for a given column/heading name.
+ */
+class RequestRowMap {
+  constructor (headingRow, rowRange) {
+    this._map = new Map();
+    this.rowRange = rowRange;
+    this.notificationSentOffset = -1;
+
+    const row = rowRange.getValues()[0]; //Get a single dimension array of columns for this row.
+
+    for (let offset = 0; offset < headingRow.length; offset++) {
+      let key = headingRow[offset].split("\n")[0];
+      this._map.set(key, row[offset]);
+
+      if (headingRow[offset] == "Notification Sent") {
+        this.notificationSentOffset = offset;
+      }
+    }
+  }
+
+  /**
+   * Return the value for the passed column/heading key.
+   * @param {string} column heading key
+   * @returns string
+   */
+  getColumnFor(key) {
+    let columnValue = this._map.get(key);
+    //If columnValue is a Date, give it nicer formatting.
+    if (columnValue instanceof Date && !isNaN(columnValue)) {
+      if (key == "Timestamp") {
+        columnValue = columnValue.toLocaleString();
+      }
+      else {
+        columnValue = columnValue.toDateString();
+      }
+    }
+    return columnValue
+  }
+
+  /**
+   * Set "Notification Sent" cell to "Yes".
+   */
+  setNotificationSent() {
+    this.rowRange.offset(0, this.notificationSentOffset, 1, 1).setValue("Yes");
+  }
+}
+
+class Notification {
+  constructor (configArray) {
+    this.status = configArray[0];
+    this.emailTo = configArray[1];
+    this.notificationText = configArray[2];
+    this.admin = configArray[3];
+  }
+}
+
+/**
+ * sendNotifications for a requestRow, applying the appropriate Notification(s) and recipient email address.
+ */
+class NotificationManager {
+    constructor (notifications, staffNames) {
+        this._notifications = notifications
+        this._staffEmailMap = new Map();
+        this._adminEmails = [];
+
+        // Create Map of staff name/email address pairs.
+        for (let staffName of staffNames) {
+            let staffFullName = staffName[0] + " " + staffName[1];
+            let staffEmailAddress = staffName[2];
+            this._staffEmailMap.set(staffFullName, staffEmailAddress);
+
+            //Also save array of staffEmailAddress for Admins.
+            let isAdmin = staffName[3];
+            if (isAdmin.toLowerCase() == "yes") {
+              this._adminEmails.push(staffEmailAddress)
+            }
+        }
+    }
+
+    /**
+     * sendNotifications for passed requestRow. 
+     * @param {RequestRowMap} requestRow 
+     */
+    sendNotifications(requestRow) {
+        const notifications = this._getNotificationsFor(requestRow.getColumnFor("Status"));
+
+        for (let notification of notifications) {
+            let keywords;
+            let emailBody;
+            keywords = this._getKeywords(notification.emailTo);
+
+            //Send email to Admin(s).
+            if (keywords == "{Admin}") {
+              emailBody = this._formatBody(notification.notificationText, requestRow);
+              for (let adminEmail of this._adminEmails) {
+                sendEmail(adminEmail, emailBody);
+              }
+            }
+            //Send email to the specific configured person.
+            else {
+              let emailToName = this._substituteText(keywords[0], requestRow);
+              let emailToAddress = this._staffEmailMap.get(emailToName);
+
+              if (emailToAddress != undefined) { //Can't send email if it wasn't found in _staffEmailMap.
+                emailBody = this._formatBody(notification.notificationText, requestRow);
+                sendEmail(emailToAddress, emailBody);
+                requestRow.setNotificationSent();
+              }
+              else {
+                Logger.log(`Could not get email address for ${keywords[0]} in request Timestamp ${requestRow.getColumnFor("Timestamp").toLocaleString()}.`);
+              }
+            }
+        }
+    }
+
+    /**
+     * Format the passed notificationText using requestRow data.
+     * @param {string} notificationText
+     * @param {RequestRowMap} requestRow 
+     * @returns string
+     */
+    _formatBody(notificationText, requestRow) {
+      const keywords = this._getKeywords(notificationText);
+      //Start with "raw" notificationText containing keywords that need to be replaced.
+      let emailBody = notificationText;
+      //Spin through the keywords and replace each with its _substituteText.
+      for (let keyword of keywords) {
+          emailBody = emailBody.replace(keyword, this._substituteText(keyword, requestRow));
+      }
+
+      return emailBody;
+    }
+
+    /**
+     * Return a Notification[] for the passed status.
+     * @param {string} status 
+     * @returns Notification[]
+     */
+    _getNotificationsFor(status) {
+        const notifications = [];
+        for (let notification of this._notifications)
+            if (notification.status == status) {
+                notifications.push(notification);
+            }
+        return notifications;
+    }
+
+    /**
+     * Given a string containing keywords surrounded by {},
+     * return a string[] with just the keywords (still surrounded by {}).
+     * @param {string} text 
+     * @returns string[]
+     */
+    _getKeywords(text) {
+        const regex = /{([^}]+)}/g; // Regular expression to match text within curly braces
+        return text.match(regex);
+    }
+
+    /**
+     * Use passed keyword as column lookup key in requestRow,
+     * then return the value at that column.
+     * @param {string} keyword 
+     * @param {RequestRowmap} requestRow 
+     * @returns string
+     */
+    _substituteText(keyword, requestRow) {
+        const keywordSanBraces = keyword.slice(1, -1); //Remove the curly braces.
+        const substituteText = requestRow.getColumnFor(keywordSanBraces);
+        return (substituteText == undefined ? "not specified" : substituteText);
+    }
+}

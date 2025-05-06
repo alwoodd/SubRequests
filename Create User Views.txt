@@ -1,0 +1,119 @@
+const SUB_SPREADSHEET = "Substitute Teacher Requests";
+const STAFF_SHEET_NAME = "Staff Names";
+const REQUESTS_SHEET_NAME = "Requests";
+const FOLDER = "Sub User Views";
+const EMAIL_COLUMN_NAME = "Email Address";
+
+function main() {
+  sheetFile = Utilities.findGoogleDocFile(SUB_SPREADSHEET);
+  const adminSpreadSheet = SpreadsheetApp.open(sheetFile);
+  const staffSheet = adminSpreadSheet.getSheetByName(STAFF_SHEET_NAME);
+  let emailAddresses = [];
+  if (staffSheet != null) {
+    emailAddresses = getEmailAddresses(staffSheet)
+  }
+
+  //Get rows from the REQUESTS_SHEET_NAME.
+  const adminSheet = adminSpreadSheet.getSheetByName(REQUESTS_SHEET_NAME);
+  const entireRange = adminSheet.getDataRange();
+  const headingRow = entireRange.getValues()[0];
+  //Data range below the header.
+  const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, entireRange.getNumColumns());
+  const dataRangeNumRows = dataRange.getNumRows();
+  const dataValues = dataRange.getValues();
+
+  //createViewFor() every emailAddress in STAFF_SHEET_NAME.
+  const destinationFolder = findFolder(FOLDER);
+  if (destinationFolder != null) {
+    for (let emailAddress of emailAddresses) {
+      createViewFor(destinationFolder, emailAddress, headingRow, dataValues, dataRangeNumRows);
+    }
+  }
+}
+
+function createViewFor(destinationFolder, currentUserEmail, headingRow, dataValues, dataRangeNumRows) {
+  const emailColumnNum = headingRow.indexOf(EMAIL_COLUMN_NAME);
+  if (emailColumnNum == -1) {
+    Logger.log(`${EMAIL_COLUMN_NAME} not found in headingRow!`);
+    return;
+  }
+
+  const userSpreadSheetName = "Sub Requests for " + currentUserEmail;
+  let sheetFile = Utilities.findGoogleDocFile(userSpreadSheetName);
+  let myViewSpreadSheet;
+
+  //If we didn't find userSpreadSheetName, create it.
+  if (sheetFile == null) {
+    Logger.log(`Creating new file for ${currentUserEmail}.`);
+    myViewSpreadSheet = SpreadsheetApp.create(userSpreadSheetName);
+    sheetFile = DriveApp.getFileById(myViewSpreadSheet.getId());
+    //Google automatically notifies a is user when they are added as a viewer.
+    sheetFile.addViewer(currentUserEmail);
+    sheetFile.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+    sheetFile.moveTo(destinationFolder);
+  }
+  //Else we found userSpreadSheetName. Just open it.
+  else {
+    Logger.log(`Opening existing file for ${currentUserEmail}.`);
+    myViewSpreadSheet = SpreadsheetApp.open(sheetFile);
+  }
+  const myViewSheet = myViewSpreadSheet.getSheetByName("Sheet1");
+  myViewSheet.clear();
+
+  //Heading row
+  myViewSheet.appendRow(headingRow);
+  //Process data rows
+  for (let rowNum = 0; rowNum < dataRangeNumRows; rowNum++) {
+    if (dataValues[rowNum][emailColumnNum] == currentUserEmail)
+    myViewSheet.appendRow(dataValues[rowNum]);
+  }
+
+  const shortCutVerbiage = "Save a short to this sheet with File > Add shortcut to Drive, then select a destination."
+  let separater = "-".padStart(shortCutVerbiage.length, "-");
+  myViewSheet.appendRow([separater]);
+  myViewSheet.appendRow([shortCutVerbiage]);
+  myViewSheet.appendRow([' ']);
+  myViewSheet.appendRow([`(Sheet last updated ${new Date(Date.now()).toLocaleString()})`])
+}
+
+function getEmailAddresses(sheet) {
+  let emailAddresses = [];
+
+  const entireRange = sheet.getDataRange();
+  const headingRow = entireRange.getValues()[0];
+  //Data range below the header.
+  const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, entireRange.getNumColumns());
+  const dataValues = dataRange.getValues();
+
+  const emailColumnNum = headingRow.indexOf(EMAIL_COLUMN_NAME);
+  if (emailColumnNum != -1) {
+    emailAddresses = dataValues.map(colValue => colValue[emailColumnNum]);
+    Logger.log(`Email addresses found: ${emailAddresses}`);
+  }
+  else {
+    Logger.log(`${EMAIL_COLUMN_NAME} not found!`);
+  }
+
+  return emailAddresses;
+}
+
+function findFolder(folderName) {
+  const folders = DriveApp.getFoldersByName(folderName);
+
+  let foundFolder = null;
+
+  while (folders.hasNext()) {
+    let folder = folders.next();
+    if (foundFolder != null) {
+      Logger.log("More than one folder found with name %s!", folderName);
+      foundFolder = null;
+      break;
+    }
+    else {
+      foundFolder = folder;
+    }
+  }
+
+  Logger.log("The folder %s was found", foundFolder);
+  return foundFolder;
+}

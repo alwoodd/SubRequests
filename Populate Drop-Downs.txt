@@ -1,0 +1,125 @@
+//Sheet constants
+const SUB_SPREADSHEET = "Substitute Teacher Requests";
+const STAFF_SHEET_NAME = "Staff Names";
+const REQUESTS_SHEET_NAME = "Requests";
+const EMAIL_COLUMN_NAME = "Email Address";
+const ASSIGNED_SUB_NAME = "Assigned Sub";
+
+//Form constants
+const SUB_FORM = "Sub Request";
+const PREFERRED_SUB_ITEM_TITLE = "Preferred Sub";
+const REQUESTER_NAME_TITLE = "Requester Name";
+
+function main() {
+  const staffNames = getStaffNames();
+  if (staffNames == null) {
+    Logger.log("No drop-downs set!");
+    return;
+  }
+
+  /***************Populate Request Sheet Items*************/
+  const sheet = findSheet(SUB_SPREADSHEET, REQUESTS_SHEET_NAME);
+  if (sheet != null) {
+    /******Set the ASSIGNED_SUB_NAME drop-downs *********/
+      const entireRange = sheet.getDataRange();
+      const headingRange = entireRange.offset(0, 0, 1, entireRange.getNumColumns());
+      const headingRow = headingRange.getValues()[0];
+
+      //The colNum of ASSIGNED_SUB_NAME within the headingRow is the column we want from dataValues.
+      const colNum = headingRow.indexOf(ASSIGNED_SUB_NAME);
+      if (colNum != -1) {
+        const validationBuilder = SpreadsheetApp.newDataValidation();
+        validationBuilder.requireValueInList(staffNames, true); //Also show drop-down.
+        const validationRule = validationBuilder.build();
+
+        const assignedSubRange = entireRange.offset(1, colNum, entireRange.getNumRows() - 1, 1);
+        assignedSubRange.setDataValidation(validationRule);
+      }
+      else {
+        Logger.log(`${ASSIGNED_SUB_NAME} not set!`);
+      }
+  }
+
+  /****************Populate Request Form Items*************/
+  const form = getForm();
+  if (form != null) {
+    /******Populate the "Preferred Sub" drop-down *********/
+    setFormItems(form, PREFERRED_SUB_ITEM_TITLE, FormApp.ItemType.LIST, staffNames);
+    
+    /******Populate the "Requester Name drop-down *********/
+    setFormItems(form, REQUESTER_NAME_TITLE, FormApp.ItemType.LIST, staffNames);
+  }
+}
+
+function getForm() {
+  let form = null;
+
+  const formFile = Utilities.findGoogleDocFile(SUB_FORM);
+  if (formFile != null) {
+    const formID = formFile.getId();
+    form = FormApp.openById(formID);
+  }
+  else {
+    Logger.log(`${SUB_FORM} not found!`);
+  }
+
+  return form;
+}
+
+function getStaffNames() {
+  let staffNames = null;
+
+  const sheet = findSheet(SUB_SPREADSHEET, STAFF_SHEET_NAME);
+  if (sheet != null) {
+    const entireRange = sheet.getDataRange();
+    const numberOfColumns = entireRange.getNumColumns();
+    const headingRange = entireRange.offset(0, 0, 1, numberOfColumns);
+    const headingRow = headingRange.getValues()[0];
+
+    //Data range below the header.
+    const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, numberOfColumns);
+    const dataValues = dataRange.getValues();
+
+    /* We are looking for for 2 columns with "Name" in them.
+     * Once we find a "Name" column, assume the other "Name" column is next to it.
+     * Append these two column values together to form a single name.
+     */
+    const nameColNum = headingRow.findIndex(strValue => strValue.indexOf("Name") != -1);
+    if (nameColNum != -1) {
+      staffNames = dataValues.map(rowValue => rowValue[nameColNum] + " " + rowValue[nameColNum + 1]);
+    }
+  }
+  else {
+    Logger.log(`${STAFF_SHEET_NAME} not found!`);
+  }
+
+  Logger.log(`Staff names found: ${staffNames}`);
+  return staffNames;
+}
+
+function setFormItems(form, itemTitle, itemType, itemValues) {
+  //Get all form items of the type itemType.
+  const items = form.getItems(itemType);
+
+  for (let item of items) {
+    //This test handles when title includes extra text.
+    if (item.getTitle().startsWith(itemTitle)) {
+      const thisItem = item.asListItem();
+      thisItem.setChoiceValues(itemValues);
+    }
+  }
+}
+
+function findSheet(spreadSheetName, sheetName) {
+  let sheet = null;
+
+  const sheetFile = Utilities.findGoogleDocFile(spreadSheetName);
+  if (sheetFile != null) {
+    const spreadSheet = SpreadsheetApp.open(sheetFile);
+    sheet = spreadSheet.getSheetByName(sheetName); //returns null if sheetName not found.
+  }
+  else {
+    Logger.log(`${spreadSheetName} not found!`);
+  }
+  return sheet;
+}

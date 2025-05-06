@@ -1,0 +1,20 @@
+function findGoogleDocFile(docName) {
+  let files = DriveApp.getFilesByName(docName);
+
+  let foundGoogleDocFile = null;
+
+  while (files.hasNext()) {
+    let file = files.next();
+    if (foundGoogleDocFile != null) {
+      Logger.log("More than one file found with name %s!", docName);
+      foundGoogleDocFile = null;
+      break;
+    }
+    else {
+      foundGoogleDocFile = file;
+    }
+  }
+
+  Logger.log("The file %s was found", foundGoogleDocFile);
+  return foundGoogleDocFile;
+}

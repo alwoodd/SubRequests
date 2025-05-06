@@ -1,0 +1,100 @@
+const NOTIFICATION_COLUMN_NAME = "Notification Sent";
+const STATUS_COLUMN_NAME = "Status";
+const DEFAULT_STATUS_VALUE = "Pending";
+
+/**
+ * If isStatusEdited, setNotificationSentToNo().
+ */
+function onEdit(event) {
+  Logger.log("Range edited: " + event.range.getA1Notation());
+  Logger.log("Value entered: " + event.value);
+  Logger.log("Column number edited: " + event.range.getColumn());
+  
+  //Any time isStatusEdited(), setNotificationSentToNo() so a(nother) notification will be sent.
+  const isStatusEdited = isStatusCellEdited(event);
+  Logger.log("isStatusEdited? " + isStatusEdited);
+
+  if (isStatusEdited) {
+    setNotificationSentToNo(event);
+  }
+}
+
+/**
+ * When the related form is submitted and adds a row, set its STATUS_COLUMN_NAME to DEFAULT_STATUS_VALUE.
+ */
+function onRequestFormAddRow(event) {
+  const range = event.range;
+  const sheet = range.getSheet();
+  const headingRange = sheet.getRange(1, 1, 1, sheet.getLastColumn());
+  const headingRow = headingRange.getValues()[0];
+  const colIndex = headingRow.indexOf(STATUS_COLUMN_NAME) + 1;
+
+  const rowNumberEdited = range.getRow();
+  const cellRange = sheet.getRange(rowNumberEdited, colIndex);
+  //If the STATUS_COLUMN_NAME cell is empty, set it to DEFAULT_STATUS_VALUE.
+  if (!cellRange.getValue()) {
+    cellRange.setValue(DEFAULT_STATUS_VALUE);
+  }
+}
+
+function isStatusCellEdited(event) {
+  //Need to see entire sheet within spreadsheet.
+  const spreadSheet = event.source;
+  const sheet = spreadSheet.getActiveSheet();
+  //cellRange is just the edited cell.
+  const cellRange = event.range;
+  //cellRange knows its column number within the entire sheet(!).
+  const columnNumberEdited = cellRange.getColumn();
+  //Get the heading cell for the edited column, and see if it is "Status".
+  const headingRange = sheet.getRange(1, columnNumberEdited, 1);
+  const headingValue = headingRange.getValue();
+  Logger.log("headingValue edited: " + headingValue);
+  return headingValue == STATUS_COLUMN_NAME;
+}
+
+function setNotificationSentToNo(event) {
+  //Need to see entire sheet within spreadsheet.
+  const spreadSheet = event.source;
+  const sheet = spreadSheet.getActiveSheet();
+  //cellRange is just the edited cell.
+  const cellRange = event.range;
+  //cellRange knows its row number within the entire sheet(!).
+  const rowNumberEdited = cellRange.getRow();
+  const notificationColumnNumber = getNotificationColumnNumber(event);
+  if (notificationColumnNumber == -1) {
+    Logger.log("Unable to set " + NOTIFICATION_COLUMN_NAME);
+  }
+  else {
+    const notificationRange = sheet.getRange(rowNumberEdited, notificationColumnNumber, 1);
+    notificationRange.setValue("No");
+  }
+}
+
+function getNotificationColumnNumber(event) {
+  //Need to see entire sheet within spreadsheet.
+  const spreadSheet = event.source;
+  const sheet = spreadSheet.getActiveSheet();
+  const lastColumnNumberInSheet = sheet.getLastColumn();
+  Logger.log("lastColumnNumberInSheet: " + lastColumnNumberInSheet);
+  const headingRange = sheet.getRange(1, 1, 1, lastColumnNumberInSheet);
+  const headingColumnValues = headingRange.getValues()[0];
+
+  let columnNumber = 0;
+  for (; columnNumber < headingColumnValues.length; columnNumber++) {
+    if (headingColumnValues[columnNumber] == NOTIFICATION_COLUMN_NAME) {
+      break;
+    }
+  }
+
+  columnNumber++;
+  if (columnNumber > lastColumnNumberInSheet) {
+    Logger.log("Unable to find " + NOTIFICATION_COLUMN_NAME + " column!");
+    Logger.log("Length of headingColumnValues: " + headingColumnValues.length + " headingColumnValues: " + headingColumnValues);
+    columnNumber = -1;
+  }
+  else {
+    Logger.log("The notification column number is " + columnNumber);
+  }
+
+  return columnNumber;
+}
