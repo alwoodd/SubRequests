@@ -2,12 +2,11 @@
 const SUB_SPREADSHEET = "Substitute Teacher Requests";
 const STAFF_SHEET_NAME = "Staff Names";
 const REQUESTS_SHEET_NAME = "Requests";
-const EMAIL_COLUMN_NAME = "Email Address";
-const ASSIGNED_SUB_NAME = "Assigned Sub";
+const FIRST_ASSIGNED_SUB_NAME = "Assigned Period 1";
+const NUMBER_OF_PERIODS = 8;
 
 //Form constants
 const SUB_FORM = "Sub Request";
-const PREFERRED_SUB_ITEM_TITLE = "Preferred Sub";
 const REQUESTER_NAME_TITLE = "Requester Name";
 
 function main() {
@@ -20,32 +19,32 @@ function main() {
   /***************Populate Request Sheet Items*************/
   const sheet = findSheet(SUB_SPREADSHEET, REQUESTS_SHEET_NAME);
   if (sheet != null) {
-    /******Set the ASSIGNED_SUB_NAME drop-downs *********/
+    /**
+     * Set the drop-downs starting with FIRST_ASSIGNED_SUB_NAME, plus the NUMBER OF PERIODS columns after it.
+     * All of the Assigned Period columns are expected to be contiguous, and in order from left to right.
+     */
       const entireRange = sheet.getDataRange();
       const headingRange = entireRange.offset(0, 0, 1, entireRange.getNumColumns());
       const headingRow = headingRange.getValues()[0];
 
-      //The colNum of ASSIGNED_SUB_NAME within the headingRow is the column we want from dataValues.
-      const colNum = headingRow.indexOf(ASSIGNED_SUB_NAME);
+      //Find FIRST_ASSIGNED_SUB_NAME, then set it and the rest of Assigned Periods from there.
+      const colNum = headingRow.indexOf(FIRST_ASSIGNED_SUB_NAME);
       if (colNum != -1) {
         const validationBuilder = SpreadsheetApp.newDataValidation();
         validationBuilder.requireValueInList(staffNames, true); //Also show drop-down.
         const validationRule = validationBuilder.build();
 
-        const assignedSubRange = entireRange.offset(1, colNum, entireRange.getNumRows() - 1, 1);
+        const assignedSubRange = entireRange.offset(1, colNum, entireRange.getNumRows() - 1, NUMBER_OF_PERIODS);
         assignedSubRange.setDataValidation(validationRule);
       }
       else {
-        Logger.log(`${ASSIGNED_SUB_NAME} not set!`);
+        Logger.log(`Could not find ${FIRST_ASSIGNED_SUB_NAME}!`);
       }
   }
 
   /****************Populate Request Form Items*************/
   const form = getForm();
   if (form != null) {
-    /******Populate the "Preferred Sub" drop-down *********/
-    setFormItems(form, PREFERRED_SUB_ITEM_TITLE, FormApp.ItemType.LIST, staffNames);
-    
     /******Populate the "Requester Name drop-down *********/
     setFormItems(form, REQUESTER_NAME_TITLE, FormApp.ItemType.LIST, staffNames);
   }

@@ -1,28 +1,37 @@
 const SUB_SPREADSHEET = "Substitute Teacher Requests";
-const REQUESTS_SHEET_NAME = "Requests";
-const NOTIFICATION_SHEET_NAME = "Notification Configuration";
-const STAFF_NAMES_SHEET_NAME = "Staff Names";
+const REQUESTS_SHEET = "Requests";
+const NOTIFICATION_SHEET = "Notification Configuration";
+const STAFF_NAMES = "Staff Names";
+
+const PERIOD_NUMBER = "{n}";
+const NUMBER_OF_PERIODS = 8;
+const ASSIGNED_PERIOD_PREFIX = "Assigned Period";
+const ASSIGNED_PERIOD_N = "{" + ASSIGNED_PERIOD_PREFIX + " n" + "}";
+const REPEATABLE_PERIOD_KEYWORDS = ["{Period n Subject}", ASSIGNED_PERIOD_N];
+const ALL_ASSIGNED_PERIOD_N = "{All Assigned Period n}";
+
+const ENABLE_EMAILS = false;
 
 function main() {
   const sheetFile = Utilities.findGoogleDocFile(SUB_SPREADSHEET);
   if (sheetFile != null) {
     const spreadSheet = SpreadsheetApp.open(sheetFile);
 
-    const notifDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(NOTIFICATION_SHEET_NAME));
+    const notifDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(NOTIFICATION_SHEET));
 
     const notifConfigs = [];
     for (dataColumns of notifDataValues) {
       notifConfigs.push(new Notification(dataColumns));
     }
 
-    const staffDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(STAFF_NAMES_SHEET_NAME));
+    const staffDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(STAFF_NAMES));
 
-    const sheet = spreadSheet.getSheetByName(REQUESTS_SHEET_NAME);
+    const sheet = spreadSheet.getSheetByName(REQUESTS_SHEET);
     const entireRange = sheet.getDataRange();
     const headingRange = entireRange.offset(0, 0, 1, entireRange.getNumColumns());
     const headingRow = headingRange.getValues()[0];
 
-    //Convert all rows in REQUESTS_SHEET_NAME range to a RequestRowMap[].
+    //Convert all rows in REQUESTS_SHEET range to a RequestRowMap[].
     const requestRows = [];
     for (let rowNum = 1; rowNum < entireRange.getNumRows(); rowNum++) {
       let currentRange = entireRange.offset(rowNum, 0, 1, entireRange.getNumColumns());
@@ -48,10 +57,17 @@ function sendEmail(sendTo, body) {
     body: body,
     noReply: true
   };
-  MailApp.sendEmail(message);
+  if (ENABLE_EMAILS) {
+    MailApp.sendEmail(message);
+  }
   Logger.log(`Email sent to ${sendTo}: ${body}`);
 }
 
+/**
+ * Return rectangular grid of values for the passed sheet.
+ * @param {Sheet} sheet
+ * @returns Object[][]
+ */
 function getDataValuesForSheet(sheet) {
   const entireRange = sheet.getDataRange();
   //Data range below the header.
@@ -60,10 +76,81 @@ function getDataValuesForSheet(sheet) {
 }
 
 /**
- * Represents a row. Use getColumnFor() to get the value for a given column/heading name.
+ * Store all unique staff names in this request, with all the periods they are assigned,
+ * into a new instance of StaffPeriods.
+ * @param {RequestRowMap} requestRow 
+ * @returns StaffPeriods
+ */
+function createStaffPeriods(requestRow) {
+    const staffPeriods = new StaffPeriods();
+    for (let period = 1; period <= NUMBER_OF_PERIODS; period++) {
+        let key = ASSIGNED_PERIOD_PREFIX + " " + period;
+        let staffName = requestRow.getColumnFor(key);
+        if (staffName != "" && staffName != undefined) {
+            staffPeriods.addPeriodForStaffName(staffName, period);
+        }
+    }
+
+    return staffPeriods;
+}
+
+/**
+ * Maps a given staffName to all the periods they've been assigned.
+ */
+class StaffPeriods {
+    constructor() {
+      this._staffMap = new Map();
+    }
+
+    /**
+     * Adds the passed period to the periods for the passed staffName.
+     * @param {string} staffName 
+     * @param {number} period 
+     */
+    addPeriodForStaffName(staffName, period) {
+        if (!this._staffMap.has(staffName)) {
+            this._staffMap.set(staffName, []);
+        }
+
+        const periods = this._staffMap.get(staffName);
+        periods.push(period);
+    }
+
+    /**
+     * Returns list of periods for the passed staffName.
+     * @param {string} staffName 
+     * @returns number[]
+     */
+    getPeriodsForStaffName(staffName) {
+        let periods = [];
+
+        if (this._staffMap.has(staffName)) {
+            periods = this._staffMap.get(staffName);
+        }
+
+        return periods;
+    }
+
+    /**
+     * Gets all the staffNames that were added using addPeriodForStaffName().
+     * @returns Iterator
+     */
+    getAllStaffNames() {
+        return this._staffMap.keys();
+    }
+}
+
+/**
+ * Represents a request row.
+ * Use getColumnFor() to get the value for a given column/heading name.
+ * Use setNotificationSent() to set request's Notification Sent to Yes.
  */
 class RequestRowMap {
-  constructor (headingRow, rowRange) {
+  /**
+  * @param {string[]} headingRow 
+  * @param {Range} rowRange 
+  */
+  constructor(headingRow, rowRange) {
     this._map = new Map();
     this.rowRange = rowRange;
     this.notificationSentOffset = -1;
@@ -107,8 +194,14 @@ class RequestRowMap {
   }
 }
 
+/**
+ * Represents a row from Notification Configuration.
+ */
 class Notification {
-  constructor (configArray) {
+  /**
+   * @param {string[]} configArray 
+   */
+  constructor(configArray) {
     this.status = configArray[0];
     this.emailTo = configArray[1];
     this.notificationText = configArray[2];
@@ -117,13 +210,29 @@ class Notification {
 }
 
 /**
- * sendNotifications for a requestRow, applying the appropriate Notification(s) and recipient email address.
+ * sendNotifications for a requestRow, applying the appropriate Notification(s), keyword replacements,
+ * and recipient email address.
  */
 class NotificationManager {
-    constructor (notifications, staffNames) {
-        this._notifications = notifications
+    /**
+     * @param {Notification[]} notifications 
+     * @param {string[]} staffNames from Staff Names tab
+     */
+    constructor(notifications, staffNames) {
+        this._notificationMap = new Map();
         this._staffEmailMap = new Map();
         this._adminEmails = [];
+
+        // Create Map of notifications by status
+        let notificationArray;
+        for (let notification of notifications) {
+            if (!this._notificationMap.has(notification.status)) {
+                notificationArray = [];
+                this._notificationMap.set(notification.status, notificationArray);
+            }
+            notificationArray = this._notificationMap.get(notification.status);
+            notificationArray.push(notification);
+        }
 
         // Create Map of staff name/email address pairs.
         for (let staffName of staffNames) {
@@ -133,7 +242,7 @@ class NotificationManager {
 
             //Also save array of staffEmailAddress for Admins.
             let isAdmin = staffName[3];
-            if (isAdmin.toLowerCase() == "yes") {
+            if (isAdmin != undefined && isAdmin.toLowerCase() == "yes") {
               this._adminEmails.push(staffEmailAddress)
             }
         }
@@ -141,36 +250,69 @@ class NotificationManager {
 
     /**
      * sendNotifications for passed requestRow. 
+     * Each requestRow will have one status value, but potentially several notifications
+     * configured for that status.
      * @param {RequestRowMap} requestRow 
      */
     sendNotifications(requestRow) {
-        const notifications = this._getNotificationsFor(requestRow.getColumnFor("Status"));
+        const notifications = this._notificationMap.get(requestRow.getColumnFor("Status"));
 
         for (let notification of notifications) {
-            let keywords;
             let emailBody;
-            keywords = this._getKeywords(notification.emailTo);
+            let emailToName = notification.emailTo;
+            let emailToAddress;
 
-            //Send email to Admin(s).
-            if (keywords == "{Admin}") {
+            //Send an email to each Admin.
+            if (emailToName == "admin") {
               emailBody = this._formatBody(notification.notificationText, requestRow);
               for (let adminEmail of this._adminEmails) {
                 sendEmail(adminEmail, emailBody);
               }
             }
-            //Send email to the specific configured person.
-            else {
-              let emailToName = this._substituteText(keywords[0], requestRow);
-              let emailToAddress = this._staffEmailMap.get(emailToName);
+            //Send an email to each assigned sub.
+            else if (emailToName == "assigned subs") {
+                //Store all unique staff names in this request, with all the periods they are assigned.
+                 const staffPeriods = createStaffPeriods(requestRow);
+
+                //Iterate staff names in staffPeriods. Send one email per staff that contains
+                //all the period subjects they're assigned (depending on the Notification Configuration).
+                staffPeriods.getAllStaffNames().forEach(staffName => {
+                    emailToAddress = this._staffEmailMap.get(staffName);
+                    if (emailToAddress != undefined) {
+                        emailBody = this._formatIterations(notification.notificationText, requestRow, staffPeriods.getPeriodsForStaffName(staffName));
+
+                        //Replace any ASSIGNED_PERIOD_N left with staffName.
+                        emailBody = emailBody.replaceAll(ASSIGNED_PERIOD_N, staffName);
+
+                        //Format everything else.
+                        emailBody = this._formatBody(emailBody, requestRow);
+                        sendEmail(emailToAddress, emailBody);
+                        requestRow.setNotificationSent();
+                    }
+                    else {
+                        Logger.log(`Could not get email address for ${staffName} in request Timestamp ${requestRow.getColumnFor("Timestamp")}.`);
+                    }
+                });
+            }
+            //Send email to the requester.
+            else if (emailToName == "requester") {
+              emailToName = this._substituteText("{Requester Name}", requestRow);
+              emailToAddress = this._staffEmailMap.get(emailToName);
 
               if (emailToAddress != undefined) { //Can't send email if it wasn't found in _staffEmailMap.
-                emailBody = this._formatBody(notification.notificationText, requestRow);
+                const staffPeriods = createStaffPeriods(requestRow);
+
+                emailBody = this._formatStaffNameList(notification.notificationText, staffPeriods);
+                emailBody = this._formatBody(emailBody, requestRow);
                 sendEmail(emailToAddress, emailBody);
                 requestRow.setNotificationSent();
               }
               else {
-                Logger.log(`Could not get email address for ${keywords[0]} in request Timestamp ${requestRow.getColumnFor("Timestamp").toLocaleString()}.`);
+                Logger.log(`Could not get email address for ${emailToName} in request Timestamp ${Date(requestRow.getColumnFor("Timestamp"))}.`);
               }
+            }
+            else {
+                Logger.log(`${emailToName} is unexpected in request Timestamp ${requestRow.getColumnFor("Timestamp")}.`)
             }
         }
     }
@@ -184,27 +326,122 @@ class NotificationManager {
     _formatBody(notificationText, requestRow) {
       const keywords = this._getKeywords(notificationText);
       //Start with "raw" notificationText containing keywords that need to be replaced.
-      let emailBody = notificationText;
+      let output = notificationText;
       //Spin through the keywords and replace each with its _substituteText.
       for (let keyword of keywords) {
-          emailBody = emailBody.replace(keyword, this._substituteText(keyword, requestRow));
+          output = output.replace(keyword, this._substituteText(keyword, requestRow));
       }
 
-      return emailBody;
+      return output;
     }
 
     /**
-     * Return a Notification[] for the passed status.
-     * @param {string} status 
-     * @returns Notification[]
+     * Format the parts between {begin repeat periods} and {end repeat periods} within notificationText.
+     * Formatting iterates the passed periods to generate all the concrete substitution values.
+     * For example, if {Period n Subject} appears between the begin and end tags, and periods 1 and 2
+     * are passed, then the values for both {Period 1 Subject} and {Period 2 Subject} are substituted, and
+     * appear in the output.
+     * 
+     * If {begin repeat periods} and {end repeat periods} don't exist, then nothing changes.
+     * @param {string} notificationText 
+     * @param {RequestRowMap} requestRow 
+     * @param {number[]} periods 
+     * @returns string
      */
-    _getNotificationsFor(status) {
-        const notifications = [];
-        for (let notification of this._notifications)
-            if (notification.status == status) {
-                notifications.push(notification);
+    _formatIterations(notificationText, requestRow, periods) {
+        let output = notificationText;
+
+        //Get the string between {begin repeat periods} and {end repeat periods}, if it exists.
+        const toBeRepeated = notificationText.split(/\{begin repeat periods\}([\s\S]*?)\{end repeat periods\}/g);
+        if (toBeRepeated.length < 2) {
+            //{begin repeat periods} and {end repeat periods} don't exist, so nothing to format.
+            return output;
+        }
+
+        const stringToRepeat = toBeRepeated[1];
+
+        //Iterate periods, and build up repeatedString with the phrase repeated periods.length times.
+        //Each phrase occurence gets all of its PERIOD_NUMBER, and everything in REPEATABLE_PERIOD_KEYWORDS replaced.
+        let repeatedString = "";
+        periods.forEach(period => {
+            let workingPhrase = stringToRepeat.replaceAll(PERIOD_NUMBER, period);
+
+            //Look for all potential repeatable keywords. Substitute it if found.
+            REPEATABLE_PERIOD_KEYWORDS.forEach(keyword => {
+                if (workingPhrase.includes(keyword)) {
+                    let periodKeyword = this._createPeriodKey(keyword, period);
+                    workingPhrase = workingPhrase.replaceAll(keyword, this._substituteText(periodKeyword, requestRow));    
+                    repeatedString += workingPhrase;
+                }
+            });
+        });
+
+        //Now get rid of {begin repeat periods} and {end repeat periods}.
+        output = output.replace("{begin repeat periods}", "");
+        output = output.replace("{end repeat periods}", "");
+
+        //Finally, replace the one raw stringToRepeat with the built-up repeatedString.
+        output = output.replace(stringToRepeat, repeatedString);
+        
+        return output;
+    }
+
+    /**
+     * Generate a grammatically-correct list of staffNames to replace ALL_ASSIGNED_PERIOD_N
+     * in passed notificationText.
+     * @param {string} notificationText 
+     * @param {StaffPeriods} staffPeriods 
+     * @returns string
+     */
+    _formatStaffNameList(notificationText, staffPeriods) {
+        let output = notificationText;
+
+        if (notificationText.includes(ALL_ASSIGNED_PERIOD_N)) {
+            const staffNames = Array.from(staffPeriods.getAllStaffNames());
+             if (staffNames.length == 0) {
+                output = "None assigned";
+             }
+             else {
+                let staffNameList = staffNames[0];
+                for (let i = 1; i < staffNames.length; i++) {
+                    if (i == staffNames.length - 1) {
+                        staffNameList += " and ";
+                    }
+                    else {
+                        staffNameList += ", ";
+                    }
+                    staffNameList += staffNames[i];
+                }
+
+                output = output.replaceAll(ALL_ASSIGNED_PERIOD_N, staffNameList);
             }
-        return notifications;
+        }
+
+        return output;
+    }
+
+    /**
+     * Take a keyword that contains one or more "n", and replace each one
+     * with the passed period.
+     * @param {string} inputKeyword 
+     * @param {number} period 
+     * @returns string
+     */
+    _createPeriodKey(inputKeyword, period) {
+        const keywordParts = inputKeyword.split(" ");
+
+        for (let i = 0; i < keywordParts.length; i++) {
+            if (keywordParts[i] == "n" ||
+                keywordParts[i] == "n}" ||
+                keywordParts[i] == "{n")
+            {
+                keywordParts[i] = keywordParts[i].replace("n", period);
+                break;
+            }
+        }
+
+        const outputKeyword = keywordParts.join(" ");
+        return outputKeyword;
     }
 
     /**
