@@ -371,9 +371,9 @@ class NotificationManager {
                 if (workingPhrase.includes(keyword)) {
                     let periodKeyword = this._createPeriodKey(keyword, period);
                     workingPhrase = workingPhrase.replaceAll(keyword, this._substituteText(periodKeyword, requestRow));    
-                    repeatedString += workingPhrase;
                 }
             });
+            repeatedString += workingPhrase;
         });
 
         //Now get rid of {begin repeat periods} and {end repeat periods}.
