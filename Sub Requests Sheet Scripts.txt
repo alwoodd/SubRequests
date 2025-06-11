@@ -1,100 +1,257 @@
 const NOTIFICATION_COLUMN_NAME = "Notification Sent";
 const STATUS_COLUMN_NAME = "Status";
 const DEFAULT_STATUS_VALUE = "Pending";
+const ASSIGNED_STATUS_VALUE = "Assigned";
+const PERIOD_1_SUBJECT = "Period 1 Subject";
+const NUMBER_OF_PERIODS = 8;
+const ASSIGNED_PERIOD_N = "Assigned Period ";
+const HIGHLIGHT_COLOR = "yellow";
+const ALL_SUBJECTS_ASSIGNED_READY_MESSAGE = "All subjects are assigned. Ready to set status to Assigned?";
+const ALL_SUBJECTS_NOT_ASSIGNED_READY_MESSAGE = "All subjects are not yet assigned. Are you sure you want to set the status to Assigned?";
 
 /**
  * If isStatusEdited, setNotificationSentToNo().
  */
 function onEdit(event) {
-  Logger.log("Range edited: " + event.range.getA1Notation());
-  Logger.log("Value entered: " + event.value);
-  Logger.log("Column number edited: " + event.range.getColumn());
-  
-  //Any time isStatusEdited(), setNotificationSentToNo() so a(nother) notification will be sent.
-  const isStatusEdited = isStatusCellEdited(event);
-  Logger.log("isStatusEdited? " + isStatusEdited);
+  Logger.log(`Column number ${event.range.getColumn()} edited with value ${event.value}`);
 
-  if (isStatusEdited) {
-    setNotificationSentToNo(event);
+  const sheetData = new SheetData(event);
+  const headingValue = sheetData.currentColumnName;
+
+  /**
+   * If we edited STATUS_COLUMN_NAME, unconditionally setNotificationSentToNo() if it wasn't changed to ASSIGNED_STATUS_VALUE.
+   * Otherwise it was changed to ASSIGNED_STATUS_VALUE:
+   *   -Check isAllRequiredAssignmentsMade(). If so, setNotificationSentToNo().
+   *   -If NOT isAllRequiredAssignmentsMade(), prompt if isReadyToMakeAssigned().
+   *     -If so, setNotificationSentToNo().
+   *     -If not ready, set the status back to the oldValue.
+   */
+  if (headingValue == STATUS_COLUMN_NAME) {
+    if (event.range.getValue() == ASSIGNED_STATUS_VALUE) {
+        if (isAllRequiredAssignmentsMade(sheetData)) {
+            setNotificationSentToNo(sheetData);
+        }
+        else if (isReadyToMakeAssigned(ALL_SUBJECTS_NOT_ASSIGNED_READY_MESSAGE)) {
+            setNotificationSentToNo(sheetData);
+        }
+        else {
+            event.range.setValue(event.oldValue);
+        }
+    }
+    else {
+      setNotificationSentToNo(sheetData);
+    }
   }
+  /**
+   * If we edited an ASSIGNED_PERIOD_N, and
+   * STATUS_COLUMN_NAME is not already ASSIGNED_STATUS_VALUE, and
+   * isAllRequiredAssignmentsMade(), and
+   * isReadyToMakeAssigned(), then
+   * setStatusToAssigned().
+   */
+  else if (headingValue.startsWith(ASSIGNED_PERIOD_N)) {
+    let color = null;
+    if (isAassignedPeriodNCell(sheetData, headingValue) && event.range.getValue() == "") {
+      color = HIGHLIGHT_COLOR;
+    }
+    event.range.setBackground(color);
+
+    if (sheetData.getCellValueFor(STATUS_COLUMN_NAME) != ASSIGNED_STATUS_VALUE &&
+        isAllRequiredAssignmentsMade(sheetData) &&
+        isReadyToMakeAssigned(ALL_SUBJECTS_ASSIGNED_READY_MESSAGE))
+    {
+        setStatusToAssigned(sheetData);
+        setNotificationSentToNo(sheetData);
+    }
+  }
+  /**
+   * If one of the Period n Subjects was edited, set the color of the corresponding ASSIGNED_PERIOD_N accordingly.
+   */
+  else if (headingValue.search(/Period [1-8] Subject/) != -1) {
+    const period = headingValue.split(" ")[1];
+    const assignedPeriodColumnName = ASSIGNED_PERIOD_N + period;
+    const assignedPeriodRange = sheetData.currentSheet.getRange(
+        sheetData.currentRowNumber, sheetData.getColumnNumberFor(assignedPeriodColumnName), 1, 1);
+    const color = (isAassignedPeriodNCell(sheetData, assignedPeriodColumnName) && assignedPeriodRange.getValue() == "") ? HIGHLIGHT_COLOR : null;
+    assignedPeriodRange.setBackground(color);
+    }
 }
 
 /**
- * When the related form is submitted and adds a row, set its STATUS_COLUMN_NAME to DEFAULT_STATUS_VALUE.
+ * When the related form is submitted and adds a row:
+ *   -Set its STATUS_COLUMN_NAME to DEFAULT_STATUS_VALUE.
+ *   -Set the background to HIGHLIGHT_COLOR for all ASSIGNED_PERIOD_N, where N is one of the periods whose periodSubjectsFilled().
  */
 function onRequestFormAddRow(event) {
-  const range = event.range;
-  const sheet = range.getSheet();
-  const headingRange = sheet.getRange(1, 1, 1, sheet.getLastColumn());
-  const headingRow = headingRange.getValues()[0];
-  const colIndex = headingRow.indexOf(STATUS_COLUMN_NAME) + 1;
+  const sheetData = new SheetData(event);
+  const cellRange = sheetData.currentSheet.getRange(sheetData.currentRowNumber, sheetData.getColumnNumberFor(STATUS_COLUMN_NAME));
 
-  const rowNumberEdited = range.getRow();
-  const cellRange = sheet.getRange(rowNumberEdited, colIndex);
-  //If the STATUS_COLUMN_NAME cell is empty, set it to DEFAULT_STATUS_VALUE.
   if (!cellRange.getValue()) {
     cellRange.setValue(DEFAULT_STATUS_VALUE);
   }
+
+  const ranges = getAssignedPeriodRangesFor(sheetData);
+  ranges.forEach(range => {
+    range.setBackground(HIGHLIGHT_COLOR);
+  });
 }
 
-function isStatusCellEdited(event) {
-  //Need to see entire sheet within spreadsheet.
-  const spreadSheet = event.source;
-  const sheet = spreadSheet.getActiveSheet();
-  //cellRange is just the edited cell.
-  const cellRange = event.range;
-  //cellRange knows its column number within the entire sheet(!).
-  const columnNumberEdited = cellRange.getColumn();
-  //Get the heading cell for the edited column, and see if it is "Status".
-  const headingRange = sheet.getRange(1, columnNumberEdited, 1);
-  const headingValue = headingRange.getValue();
-  Logger.log("headingValue edited: " + headingValue);
-  return headingValue == STATUS_COLUMN_NAME;
+/**
+ * Returns true if assignedPeriodColumnName is for one of the periodSubjectsFilled().
+ * @param {SheetData} sheetData 
+ * @param {string} assignedPeriodColumnName
+ * @returns boolean
+ */
+function isAassignedPeriodNCell(sheetData, assignedPeriodColumnName) {
+  const periods = periodSubjectsFilled(sheetData);
+  const periodFromAssignedPeriodColumnName = assignedPeriodColumnName.split(" ")[2];
+  //Convert periodFromAssignedPeriodColumnName to number to match against numeric periods.
+  const index = periods.indexOf(Number.parseInt(periodFromAssignedPeriodColumnName));
+  Logger.log(`isAassignedPeriodNCell(${assignedPeriodColumnName}) ${(index != -1)?"is":"is NOT"} in ${periods}`);
+  return (index != -1);
 }
 
-function setNotificationSentToNo(event) {
-  //Need to see entire sheet within spreadsheet.
-  const spreadSheet = event.source;
-  const sheet = spreadSheet.getActiveSheet();
-  //cellRange is just the edited cell.
-  const cellRange = event.range;
-  //cellRange knows its row number within the entire sheet(!).
-  const rowNumberEdited = cellRange.getRow();
-  const notificationColumnNumber = getNotificationColumnNumber(event);
-  if (notificationColumnNumber == -1) {
+/**
+ * Returns true if every non-empty Subject has a non-empty Assigned Period.
+ * @param {SheetData} sheetData 
+ * @returns boolean
+ */
+function isAllRequiredAssignmentsMade(sheetData) {
+  const periodsWithSubjects = periodSubjectsFilled(sheetData);
+
+  return periodsWithSubjects.every(period => {
+    let assignedPeriodn = ASSIGNED_PERIOD_N + period;
+    return (sheetData.getCellValueFor(assignedPeriodn) != "");
+  });
+}
+
+/**
+ * Returns array of periods containing non-empty Subjects.
+ * @param {SheetData} sheetData 
+ * @returns number[]
+ */
+function periodSubjectsFilled(sheetData) {
+    const periodSubjectNumbers = [];
+
+    const period1SubjectColumnNumber = sheetData.getColumnNumberFor(PERIOD_1_SUBJECT);
+    const rowNumberEdited = sheetData.currentRowNumber;
+    const periodSubjectRange = sheetData.currentSheet.getRange(rowNumberEdited, period1SubjectColumnNumber, 1, NUMBER_OF_PERIODS);
+    const periodSubjectValues = periodSubjectRange.getValues();
+
+    periodSubjectValues[0].forEach((periodSubject, index) => {
+        if (periodSubject != "") {
+            periodSubjectNumbers.push(index + 1);
+        }
+    });
+
+    Logger.log(`Periods with subjects: ${periodSubjectNumbers}`);
+    return periodSubjectNumbers;
+}
+
+/**
+ * Prompts if ready to make status Assigned. If yes, returns true.
+ * @param {string} message 
+ * @returns boolean
+ */
+function isReadyToMakeAssigned(message) {
+  const ui = SpreadsheetApp.getUi();
+  const yesNo = ui.alert(message, ui.ButtonSet.YES_NO);
+  return (yesNo == ui.Button.YES);
+}
+
+/**
+ * @param {SheetData} sheetData 
+ */
+function setNotificationSentToNo(sheetData) {
+  const notificationColumnNumber = sheetData.getColumnNumberFor(NOTIFICATION_COLUMN_NAME);
+  if (notificationColumnNumber == undefined) {
     Logger.log("Unable to set " + NOTIFICATION_COLUMN_NAME);
   }
   else {
-    const notificationRange = sheet.getRange(rowNumberEdited, notificationColumnNumber, 1);
+    const notificationRange = sheetData.currentSheet.getRange(sheetData.currentRowNumber, notificationColumnNumber, 1);
     notificationRange.setValue("No");
   }
 }
 
-function getNotificationColumnNumber(event) {
-  //Need to see entire sheet within spreadsheet.
-  const spreadSheet = event.source;
-  const sheet = spreadSheet.getActiveSheet();
-  const lastColumnNumberInSheet = sheet.getLastColumn();
-  Logger.log("lastColumnNumberInSheet: " + lastColumnNumberInSheet);
-  const headingRange = sheet.getRange(1, 1, 1, lastColumnNumberInSheet);
-  const headingColumnValues = headingRange.getValues()[0];
-
-  let columnNumber = 0;
-  for (; columnNumber < headingColumnValues.length; columnNumber++) {
-    if (headingColumnValues[columnNumber] == NOTIFICATION_COLUMN_NAME) {
-      break;
+/**
+ * @param {SheetData} sheetData 
+ */
+function setStatusToAssigned(sheetData) {
+    const statusColumnNumber = sheetData.getColumnNumberFor(STATUS_COLUMN_NAME);
+    if (statusColumnNumber == undefined) {
+        Logger.log("Unable to set " + STATUS_COLUMN_NAME + " to " + ASSIGNED_STATUS_VALUE);
     }
-  }
+    else {
+        const statusRange = sheetData.currentSheet.getRange(sheetData.currentRowNumber, statusColumnNumber, 1);
+        statusRange.setValue(ASSIGNED_STATUS_VALUE);
+    }
+}
 
-  columnNumber++;
-  if (columnNumber > lastColumnNumberInSheet) {
-    Logger.log("Unable to find " + NOTIFICATION_COLUMN_NAME + " column!");
-    Logger.log("Length of headingColumnValues: " + headingColumnValues.length + " headingColumnValues: " + headingColumnValues);
-    columnNumber = -1;
-  }
-  else {
-    Logger.log("The notification column number is " + columnNumber);
-  }
+/**
+ * Return a Range[] containing a Range for every ASSIGNED_PERIOD_N,
+ * where N is one of the periodSubjectsFilled().
+ * @param {SheetData} sheetData 
+ * @returns Range[]
+ */
+function getAssignedPeriodRanges(sheetData) {
+    const periods = periodSubjectsFilled(sheetData);
 
-  return columnNumber;
+    const ranges = periods.map(period => {
+        let assignedPeriodn = ASSIGNED_PERIOD_N + period;
+        return sheetData.currentSheet.getRange(sheetData.currentRowNumber, sheetData.getColumnNumberFor(assignedPeriodn, 1, 1));
+    });
+
+    return ranges;
+}
+
+/**
+ * Exposes various data for the constructed Event.
+ */
+class SheetData {
+    constructor(event) {
+        this._headingMap = new Map();
+        this.event = event;
+
+        //Need to see entire sheet within spreadsheet.
+        const spreadSheet = event.source;
+        this.currentSheet = spreadSheet.getActiveSheet();
+        const lastColumnNumberInSheet = this.currentSheet.getLastColumn();
+        const headingRange = this.currentSheet.getRange(1, 1, 1, lastColumnNumberInSheet);
+        const headingColumnValues = headingRange.getValues()[0];
+
+        headingColumnValues.forEach((heading, index) => {
+            this._headingMap.set(heading, index + 1);
+        });
+
+        //cellRange is just the edited cell.
+        const cellRange = event.range;
+        //cellRange knows its row number within the entire sheet.
+        this.currentRowNumber = cellRange.getRow();
+
+        this.currentColumnNumber = cellRange.getColumn();
+        this.currentColumnName = this.currentSheet.getRange(1, this.currentColumnNumber, 1).getValue();
+    }
+
+    /**
+     * Retrieves the 1-based column number of the passed heading.
+     * @param {string} heading 
+     * @returns number
+     */
+    getColumnNumberFor(heading) {
+        const colNumber = this._headingMap.get(heading);
+        Logger.log(`getColumnNumberFor(${heading}) returning ${colNumber}`);
+        return colNumber
+    }
+    
+    /**
+     * Retrieves the cell value in the column of the passed heading.
+     * @param {string} heading 
+     * @returns string
+     */
+    getCellValueFor(heading) {
+        const cellRange = this.currentSheet.getRange(this.currentRowNumber, this.getColumnNumberFor(heading), 1, 1);
+        const value = cellRange.getValue();
+        Logger.log(`getCellValueFor(${heading}) returning ${value}`);
+        return value;
+    }
 }
