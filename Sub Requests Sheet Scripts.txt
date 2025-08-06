@@ -90,7 +90,7 @@ function onRequestFormAddRow(event) {
     cellRange.setValue(DEFAULT_STATUS_VALUE);
   }
 
-  const ranges = getAssignedPeriodRangesFor(sheetData);
+  const ranges = getAssignedPeriodRanges(sheetData);
   ranges.forEach(range => {
     range.setBackground(HIGHLIGHT_COLOR);
   });
