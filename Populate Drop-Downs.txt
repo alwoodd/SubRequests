@@ -10,7 +10,8 @@ const SUB_FORM = "Sub Request";
 const REQUESTER_NAME_TITLE = "Requester Name";
 
 function main() {
-  const staffNames = getStaffNames();
+  let staffNames = getStaffNames();
+  staffNames = cleanup(staffNames);
   if (staffNames == null) {
     Logger.log("No drop-downs set!");
     return;
@@ -92,8 +93,26 @@ function getStaffNames() {
     Logger.log(`${STAFF_SHEET_NAME} not found!`);
   }
 
-  Logger.log(`Staff names found: ${staffNames}`);
+  Logger.log(`Raw staff names found: ${staffNames}`);
   return staffNames;
+}
+
+/**
+ * Dedupe and remove blanks from staffNames
+ */
+function cleanup(staffNames) {
+  let returnedNames = [];
+
+  //Create set of unique values.
+  const dedupeSet = new Set();
+  staffNames.forEach(staffName => dedupeSet.add(staffName));
+
+  //Convert set to array, then remove blanks from the array.
+  returnedNames.push(...dedupeSet.values());
+  returnedNames = returnedNames.filter(name => name != " ");
+
+  Logger.log(`Cleaned up staff names: ${returnedNames}`);
+  return returnedNames;
 }
 
 function setFormItems(form, itemTitle, itemType, itemValues) {
