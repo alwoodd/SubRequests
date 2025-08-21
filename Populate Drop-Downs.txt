@@ -3,7 +3,7 @@ const SUB_SPREADSHEET = "Substitute Teacher Requests";
 const STAFF_SHEET_NAME = "Staff Names";
 const REQUESTS_SHEET_NAME = "Requests";
 const FIRST_ASSIGNED_SUB_NAME = "Assigned Period 1";
-const NUMBER_OF_PERIODS = 8;
+const NUMBER_OF_PERIODS = 9;
 
 //Form constants
 const SUB_FORM = "Sub Request";

@@ -5,18 +5,18 @@ const ASSIGNED_STATUS_VALUE = "Assigned";
 const PERIOD_1_SUBJECT = "Period 1 Subject";
 const NUMBER_OF_PERIODS = 8;
 const ASSIGNED_PERIOD_N = "Assigned Period ";
+const CHAPEL_FAMILIES_PERIOD = "Chapel Families";
+const ASSIGNED_CHAPEL_FAMILIES = "Assigned " + CHAPEL_FAMILIES_PERIOD;
+const PERIODS_SELECTED_COLUMN_NAME = "Select one or more periods.";
 const HIGHLIGHT_COLOR = "yellow";
 const ALL_SUBJECTS_ASSIGNED_READY_MESSAGE = "All subjects are assigned. Ready to set status to Assigned?";
 const ALL_SUBJECTS_NOT_ASSIGNED_READY_MESSAGE = "All subjects are not yet assigned. Are you sure you want to set the status to Assigned?";
 
-/**
- * If isStatusEdited, setNotificationSentToNo().
- */
 function onEdit(event) {
   Logger.log(`Column number ${event.range.getColumn()} edited with value ${event.value}`);
 
   const sheetData = new SheetData(event);
-  const headingValue = sheetData.currentColumnName;
+  const currentColumnHeadingValue = sheetData.currentColumnName;
 
   /**
    * If we edited STATUS_COLUMN_NAME, unconditionally setNotificationSentToNo() if it wasn't changed to ASSIGNED_STATUS_VALUE.
@@ -26,7 +26,7 @@ function onEdit(event) {
    *     -If so, setNotificationSentToNo().
    *     -If not ready, set the status back to the oldValue.
    */
-  if (headingValue == STATUS_COLUMN_NAME) {
+  if (currentColumnHeadingValue == STATUS_COLUMN_NAME) {
     if (event.range.getValue() == ASSIGNED_STATUS_VALUE) {
         if (isAllRequiredAssignmentsMade(sheetData)) {
             setNotificationSentToNo(sheetData);
@@ -43,15 +43,21 @@ function onEdit(event) {
     }
   }
   /**
-   * If we edited an ASSIGNED_PERIOD_N, and
-   * STATUS_COLUMN_NAME is not already ASSIGNED_STATUS_VALUE, and
-   * isAllRequiredAssignmentsMade(), and
-   * isReadyToMakeAssigned(), then
-   * setStatusToAssigned().
+   * If we edited an ASSIGNED_PERIOD_N or ASSIGNED_CHAPEL_FAMILIES:
+   * 
+   *   If that cell is empty, and either has has a corresponding non-empty period subject or isChapelFamiliesSelected(),
+   *   set that cell's background to HIGHLIGHT_COLOR. Otherwise clear the background color.
+   * 
+   *   Also:
+   *   If STATUS_COLUMN_NAME is not already ASSIGNED_STATUS_VALUE, and
+   *   isAllRequiredAssignmentsMade(), and
+   *   isReadyToMakeAssigned(), then
+   *   setStatusToAssigned() and setNotificationSentToNo().
    */
-  else if (headingValue.startsWith(ASSIGNED_PERIOD_N)) {
+  else if (currentColumnHeadingValue.startsWith(ASSIGNED_PERIOD_N) || currentColumnHeadingValue == ASSIGNED_CHAPEL_FAMILIES) {
     let color = null;
-    if (isAassignedPeriodNCell(sheetData, headingValue) && event.range.getValue() == "") {
+    if (event.range.getValue() == "" &&
+      (isAssignedPeriodNCell(sheetData, currentColumnHeadingValue) || isChapelFamiliesSelected(sheetData))) {
       color = HIGHLIGHT_COLOR;
     }
     event.range.setBackground(color);
@@ -67,20 +73,34 @@ function onEdit(event) {
   /**
    * If one of the Period n Subjects was edited, set the color of the corresponding ASSIGNED_PERIOD_N accordingly.
    */
-  else if (headingValue.search(/Period [1-8] Subject/) != -1) {
-    const period = headingValue.split(" ")[1];
+  else if (currentColumnHeadingValue.search(/Period [1-8] Subject/) != -1) {
+    const period = currentColumnHeadingValue.split(" ")[1];
     const assignedPeriodColumnName = ASSIGNED_PERIOD_N + period;
     const assignedPeriodRange = sheetData.currentSheet.getRange(
         sheetData.currentRowNumber, sheetData.getColumnNumberFor(assignedPeriodColumnName), 1, 1);
-    const color = (isAassignedPeriodNCell(sheetData, assignedPeriodColumnName) && assignedPeriodRange.getValue() == "") ? HIGHLIGHT_COLOR : null;
+    const color = (isAssignedPeriodNCell(sheetData, assignedPeriodColumnName) && assignedPeriodRange.getValue() == "") ? HIGHLIGHT_COLOR : null;
     assignedPeriodRange.setBackground(color);
+  }
+  /**
+   * If PERIODS_SELECTED_COLUMN_NAME was edited, and it currently contains isChapelFamiliesSelected(), and
+   * NOT isChapelFamiliesAssigned(), set ASSIGNED_CHAPEL_FAMILIES cell to HIGHLIGHT_COLOR (otherwise clear the color).
+   */
+  else if (currentColumnHeadingValue == PERIODS_SELECTED_COLUMN_NAME) {
+    const chapelFamiliesAssignedRange = sheetData.currentSheet.getRange(
+        sheetData.currentRowNumber, sheetData.getColumnNumberFor(ASSIGNED_CHAPEL_FAMILIES), 1, 1);
+    let color = null;
+    if (isChapelFamiliesSelected(sheetData) && !isChapelFamiliesAssigned(sheetData)) {
+      color = HIGHLIGHT_COLOR;
     }
+    chapelFamiliesAssignedRange.setBackground(color);
+  }
 }
 
 /**
  * When the related form is submitted and adds a row:
  *   -Set its STATUS_COLUMN_NAME to DEFAULT_STATUS_VALUE.
  *   -Set the background to HIGHLIGHT_COLOR for all ASSIGNED_PERIOD_N, where N is one of the periods whose periodSubjectsFilled().
+ *   -Set the background to HIGHLIGHT_COLOR for ASSIGNED_CHAPEL_FAMILIES.
  */
 function onRequestFormAddRow(event) {
   const sheetData = new SheetData(event);
@@ -94,6 +114,10 @@ function onRequestFormAddRow(event) {
   ranges.forEach(range => {
     range.setBackground(HIGHLIGHT_COLOR);
   });
+
+  const chapelFamiliesAssignedRange = sheetData.currentSheet.getRange(
+        sheetData.currentRowNumber, sheetData.getColumnNumberFor(ASSIGNED_CHAPEL_FAMILIES), 1, 1);
+  chapelFamiliesAssignedRange.setBackground(HIGHLIGHT_COLOR);
 }
 
 /**
@@ -102,7 +126,7 @@ function onRequestFormAddRow(event) {
  * @param {string} assignedPeriodColumnName
  * @returns boolean
  */
-function isAassignedPeriodNCell(sheetData, assignedPeriodColumnName) {
+function isAssignedPeriodNCell(sheetData, assignedPeriodColumnName) {
   const periods = periodSubjectsFilled(sheetData);
   const periodFromAssignedPeriodColumnName = assignedPeriodColumnName.split(" ")[2];
   //Convert periodFromAssignedPeriodColumnName to number to match against numeric periods.
@@ -119,10 +143,39 @@ function isAassignedPeriodNCell(sheetData, assignedPeriodColumnName) {
 function isAllRequiredAssignmentsMade(sheetData) {
   const periodsWithSubjects = periodSubjectsFilled(sheetData);
 
-  return periodsWithSubjects.every(period => {
+  const isAllPeriodsAssigned = periodsWithSubjects.every(period => {
     let assignedPeriodn = ASSIGNED_PERIOD_N + period;
     return (sheetData.getCellValueFor(assignedPeriodn) != "");
   });
+
+  let isChapelFamiliesFulfilled = true;
+  if (isChapelFamiliesSelected(sheetData)) {
+    if (!isChapelFamiliesAssigned(sheetData)) {
+      isChapelFamiliesFulfilled = false;
+    }
+  }
+
+  Logger.log(`isAllRequiredAssignmentsMade(): isAllPeriodsAssigned? ${isAllPeriodsAssigned}, isChapelFamiliesFulfilled? ${isChapelFamiliesFulfilled}`);
+  return (isAllPeriodsAssigned && isChapelFamiliesFulfilled);
+}
+
+/**
+ * Returns true if the PERIODS_SELECTED_COLUMN_NAME contains CHAPEL_FAMILIES_PERIOD.
+ */
+function isChapelFamiliesSelected(sheetData) {
+  const cellValue = sheetData.getCellValueFor(PERIODS_SELECTED_COLUMN_NAME);
+  const isCFselected = (cellValue.indexOf(CHAPEL_FAMILIES_PERIOD) > -1);
+  Logger.log(`isChapelFamiliesSelected? ${isCFselected}`);
+  return isCFselected;
+}
+
+/**
+ * Returns true if ASSIGNED_CHAPEL_FAMILIES is not blank.
+ */
+function isChapelFamiliesAssigned(sheetData) {
+  const isCFassigned = (sheetData.getCellValueFor(ASSIGNED_CHAPEL_FAMILIES) != "");
+  Logger.log(`isChapelFamiliesAssigned? ${isCFassigned}`);
+  return isCFassigned;
 }
 
 /**
