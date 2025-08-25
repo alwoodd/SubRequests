@@ -9,8 +9,11 @@ const ASSIGNED_PERIOD_PREFIX = "Assigned Period";
 const ASSIGNED_PERIOD_N = "{" + ASSIGNED_PERIOD_PREFIX + " n" + "}";
 const REPEATABLE_PERIOD_KEYWORDS = ["{Period n Subject}", ASSIGNED_PERIOD_N];
 const ALL_ASSIGNED_PERIOD_N = "{All Assigned Period n}";
+const CALENDAR_LINK = "{Calendar Link}";
+const REQUESTER_NAME = "{Requester Name}";
+const DATE_REQUESTED = "{Date Requested}";
 
-const ENABLE_EMAILS = false;
+const ENABLE_EMAILS = true;
 
 function main() {
   const sheetFile = Utilities.findGoogleDocFile(SUB_SPREADSHEET);
@@ -42,7 +45,7 @@ function main() {
 
     //sendNotifications() for every requestRow whose "Notification Sent" is not Yes.
     for (let requestRow of requestRows) {
-      let notificationSent = requestRow.getColumnFor("Notification Sent");
+      let notificationSent = requestRow.getValueFor("Notification Sent");
       if (notificationSent != undefined && notificationSent != "Yes") {
         notificationManager.sendNotifications(requestRow);
       }
@@ -51,7 +54,7 @@ function main() {
 }
 
 function sendEmail(sendTo, body) {
-  message = {
+  const message = {
     to: sendTo,
     subject: "Substitute Teacher Request Status",
     body: body,
@@ -85,7 +88,7 @@ function createStaffPeriods(requestRow) {
     const staffPeriods = new StaffPeriods();
     for (let period = 1; period <= NUMBER_OF_PERIODS; period++) {
         let key = ASSIGNED_PERIOD_PREFIX + " " + period;
-        let staffName = requestRow.getColumnFor(key);
+        let staffName = requestRow.getValueFor(key);
         if (staffName != "" && staffName != undefined) {
             staffPeriods.addPeriodForStaffName(staffName, period);
         }
@@ -142,7 +145,7 @@ class StaffPeriods {
 
 /**
  * Represents a request row.
- * Use getColumnFor() to get the value for a given column/heading name.
+ * Use getValueFor() to get the value for a given column/heading name.
  * Use setNotificationSent() to set request's Notification Sent to Yes.
  */
 class RequestRowMap {
@@ -172,7 +175,7 @@ class RequestRowMap {
    * @param {string} column heading key
    * @returns string
    */
-  getColumnFor(key) {
+  getValueFor(key) {
     let columnValue = this._map.get(key);
     //If columnValue is a Date, give it nicer formatting.
     if (columnValue instanceof Date && !isNaN(columnValue)) {
@@ -204,7 +207,12 @@ class Notification {
   constructor(configArray) {
     this.status = configArray[0];
     this.emailTo = configArray[1];
-    this.notificationText = configArray[2];
+    /**
+     * configArray was set using a Range.getValues(). getValues() tries to "help" by quoting any escape sequences it finds
+     * with an extra "\". So "\n" becomes "\\n", for example. At this point, we just want the single "\".
+     * JSON.parse() does this trick for us with its own parser.
+     */
+    this.notificationText = JSON.parse(`"${configArray[2]}"`);
     this.admin = configArray[3];
   }
 }
@@ -255,7 +263,7 @@ class NotificationManager {
      * @param {RequestRowMap} requestRow 
      */
     sendNotifications(requestRow) {
-        const notifications = this._notificationMap.get(requestRow.getColumnFor("Status"));
+        const notifications = this._notificationMap.get(requestRow.getValueFor("Status"));
 
         for (let notification of notifications) {
             let emailBody;
@@ -284,19 +292,22 @@ class NotificationManager {
                         //Replace any ASSIGNED_PERIOD_N left with staffName.
                         emailBody = emailBody.replaceAll(ASSIGNED_PERIOD_N, staffName);
 
+                        //Replace any CALENDAR_LINK
+                        emailBody = this._formatCalendarLink(emailBody, requestRow);
+
                         //Format everything else.
                         emailBody = this._formatBody(emailBody, requestRow);
                         sendEmail(emailToAddress, emailBody);
                         requestRow.setNotificationSent();
                     }
                     else {
-                        Logger.log(`Could not get email address for ${staffName} in request Timestamp ${requestRow.getColumnFor("Timestamp")}.`);
+                        Logger.log(`Could not get email address for ${staffName} in request Timestamp ${requestRow.getValueFor("Timestamp")}.`);
                     }
                 });
             }
             //Send email to the requester.
             else if (emailToName == "requester") {
-              emailToName = this._substituteText("{Requester Name}", requestRow);
+              emailToName = this._substituteText(REQUESTER_NAME, requestRow);
               emailToAddress = this._staffEmailMap.get(emailToName);
 
               if (emailToAddress != undefined) { //Can't send email if it wasn't found in _staffEmailMap.
@@ -308,11 +319,11 @@ class NotificationManager {
                 requestRow.setNotificationSent();
               }
               else {
-                Logger.log(`Could not get email address for ${emailToName} in request Timestamp ${Date(requestRow.getColumnFor("Timestamp"))}.`);
+                Logger.log(`Could not get email address for ${emailToName} in request Timestamp ${Date(requestRow.getValueFor("Timestamp"))}.`);
               }
             }
             else {
-                Logger.log(`${emailToName} is unexpected in request Timestamp ${requestRow.getColumnFor("Timestamp")}.`)
+                Logger.log(`${emailToName} is unexpected in request Timestamp ${requestRow.getValueFor("Timestamp")}.`)
             }
         }
     }
@@ -421,6 +432,49 @@ class NotificationManager {
     }
 
     /**
+     * If notificationText contains CALENDAR_LINK, replace it with a Google Calendar URL
+     * that offers to save the substitute teaching event to the user's calendar.
+     * @param {string} notificationText 
+     * @param {RequestRowMap} requestRow 
+     * @returns string
+     */
+    _formatCalendarLink(notificationText, requestRow) {
+        let output = notificationText;
+
+        if (notificationText.includes(CALENDAR_LINK)) {
+            const baseGoogleCalendarURL = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+            let   text = "text=Substitute teach for " + this._substituteText(REQUESTER_NAME, requestRow);
+            text =text.replaceAll(" ", "%20");
+            const dateRequested = this._substituteText(DATE_REQUESTED, requestRow);
+            const googleDate = this._makeGoogleDate(dateRequested);
+            const dates = "dates=" + googleDate + "/" + googleDate;
+            const URL = baseGoogleCalendarURL + "&" + text + "&" + dates;
+
+            output = output.replaceAll(CALENDAR_LINK, URL);
+        }
+
+        return output;
+    }
+
+    /**
+     * Convert a date string like Fri Aug 22 2025 into
+     * a string of format YYYYMMDD.
+     * @param {string} dateStr 
+     * @returns string
+     */
+    _makeGoogleDate(dateStr) {
+        function padZero(numValue) {
+            return numValue.toString().padStart(2, "0");
+        }
+
+        const date = new Date(dateStr);
+        const year = date.getFullYear().toString();
+        const month = padZero((date.getMonth() + 1));
+        const day = padZero(date.getDate());
+        return year + month + day;
+    }
+
+    /**
      * Take a keyword that contains one or more "n", and replace each one
      * with the passed period.
      * @param {string} inputKeyword 
@@ -464,7 +518,7 @@ class NotificationManager {
      */
     _substituteText(keyword, requestRow) {
         const keywordSanBraces = keyword.slice(1, -1); //Remove the curly braces.
-        const substituteText = requestRow.getColumnFor(keywordSanBraces);
+        const substituteText = requestRow.getValueFor(keywordSanBraces);
         return (substituteText == undefined ? "not specified" : substituteText);
     }
 }
