@@ -265,7 +265,7 @@ class NotificationManager {
     sendNotifications(requestRow) {
         const notifications = this._notificationMap.get(requestRow.getValueFor("Status"));
 
-        if (notifications) { //Not all request status values necessarily have a corresponding notifcation config.
+        if (notifications) { //Not all request status values necessarily have a corresponding notification config.
             for (let notification of notifications) {
                 let emailBody;
                 let emailToName = notification.emailTo;
