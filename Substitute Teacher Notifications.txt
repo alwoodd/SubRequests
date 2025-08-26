@@ -265,65 +265,67 @@ class NotificationManager {
     sendNotifications(requestRow) {
         const notifications = this._notificationMap.get(requestRow.getValueFor("Status"));
 
-        for (let notification of notifications) {
-            let emailBody;
-            let emailToName = notification.emailTo;
-            let emailToAddress;
+        if (notifications) { //Not all request status values necessarily have a corresponding notifcation config.
+            for (let notification of notifications) {
+                let emailBody;
+                let emailToName = notification.emailTo;
+                let emailToAddress;
 
-            //Send an email to each Admin.
-            if (emailToName == "admin") {
-              emailBody = this._formatBody(notification.notificationText, requestRow);
-              for (let adminEmail of this._adminEmails) {
-                sendEmail(adminEmail, emailBody);
-              }
-            }
-            //Send an email to each assigned sub.
-            else if (emailToName == "assigned subs") {
-                //Store all unique staff names in this request, with all the periods they are assigned.
-                 const staffPeriods = createStaffPeriods(requestRow);
+                //Send an email to each Admin.
+                if (emailToName == "admin") {
+                emailBody = this._formatBody(notification.notificationText, requestRow);
+                for (let adminEmail of this._adminEmails) {
+                    sendEmail(adminEmail, emailBody);
+                }
+                }
+                //Send an email to each assigned sub.
+                else if (emailToName == "assigned subs") {
+                    //Store all unique staff names in this request, with all the periods they are assigned.
+                    const staffPeriods = createStaffPeriods(requestRow);
 
-                //Iterate staff names in staffPeriods. Send one email per staff that contains
-                //all the period subjects they're assigned (depending on the Notification Configuration).
-                staffPeriods.getAllStaffNames().forEach(staffName => {
-                    emailToAddress = this._staffEmailMap.get(staffName);
-                    if (emailToAddress != undefined) {
-                        emailBody = this._formatIterations(notification.notificationText, requestRow, staffPeriods.getPeriodsForStaffName(staffName));
+                    //Iterate staff names in staffPeriods. Send one email per staff that contains
+                    //all the period subjects they're assigned (depending on the Notification Configuration).
+                    staffPeriods.getAllStaffNames().forEach(staffName => {
+                        emailToAddress = this._staffEmailMap.get(staffName);
+                        if (emailToAddress != undefined) {
+                            emailBody = this._formatIterations(notification.notificationText, requestRow, staffPeriods.getPeriodsForStaffName(staffName));
 
-                        //Replace any ASSIGNED_PERIOD_N left with staffName.
-                        emailBody = emailBody.replaceAll(ASSIGNED_PERIOD_N, staffName);
+                            //Replace any ASSIGNED_PERIOD_N left with staffName.
+                            emailBody = emailBody.replaceAll(ASSIGNED_PERIOD_N, staffName);
 
-                        //Replace any CALENDAR_LINK
-                        emailBody = this._formatCalendarLink(emailBody, requestRow);
+                            //Replace any CALENDAR_LINK
+                            emailBody = this._formatCalendarLink(emailBody, requestRow);
 
-                        //Format everything else.
-                        emailBody = this._formatBody(emailBody, requestRow);
-                        sendEmail(emailToAddress, emailBody);
-                        requestRow.setNotificationSent();
-                    }
-                    else {
-                        Logger.log(`Could not get email address for ${staffName} in request Timestamp ${requestRow.getValueFor("Timestamp")}.`);
-                    }
-                });
-            }
-            //Send email to the requester.
-            else if (emailToName == "requester") {
-              emailToName = this._substituteText(REQUESTER_NAME, requestRow);
-              emailToAddress = this._staffEmailMap.get(emailToName);
+                            //Format everything else.
+                            emailBody = this._formatBody(emailBody, requestRow);
+                            sendEmail(emailToAddress, emailBody);
+                            requestRow.setNotificationSent();
+                        }
+                        else {
+                            Logger.log(`Could not get email address for ${staffName} in request Timestamp ${requestRow.getValueFor("Timestamp")}.`);
+                        }
+                    });
+                }
+                //Send email to the requester.
+                else if (emailToName == "requester") {
+                emailToName = this._substituteText(REQUESTER_NAME, requestRow);
+                emailToAddress = this._staffEmailMap.get(emailToName);
 
-              if (emailToAddress != undefined) { //Can't send email if it wasn't found in _staffEmailMap.
-                const staffPeriods = createStaffPeriods(requestRow);
+                if (emailToAddress != undefined) { //Can't send email if it wasn't found in _staffEmailMap.
+                    const staffPeriods = createStaffPeriods(requestRow);
 
-                emailBody = this._formatStaffNameList(notification.notificationText, staffPeriods);
-                emailBody = this._formatBody(emailBody, requestRow);
-                sendEmail(emailToAddress, emailBody);
-                requestRow.setNotificationSent();
-              }
-              else {
-                Logger.log(`Could not get email address for ${emailToName} in request Timestamp ${Date(requestRow.getValueFor("Timestamp"))}.`);
-              }
-            }
-            else {
-                Logger.log(`${emailToName} is unexpected in request Timestamp ${requestRow.getValueFor("Timestamp")}.`)
+                    emailBody = this._formatStaffNameList(notification.notificationText, staffPeriods);
+                    emailBody = this._formatBody(emailBody, requestRow);
+                    sendEmail(emailToAddress, emailBody);
+                    requestRow.setNotificationSent();
+                }
+                else {
+                    Logger.log(`Could not get email address for ${emailToName} in request Timestamp ${Date(requestRow.getValueFor("Timestamp"))}.`);
+                }
+                }
+                else {
+                    Logger.log(`${emailToName} is unexpected in request Timestamp ${requestRow.getValueFor("Timestamp")}.`)
+                }
             }
         }
     }
