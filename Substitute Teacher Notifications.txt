@@ -23,7 +23,7 @@ function main() {
     const notifDataValues = getDataValuesForSheet(spreadSheet.getSheetByName(NOTIFICATION_SHEET));
 
     const notifConfigs = [];
-    for (dataColumns of notifDataValues) {
+    for (let dataColumns of notifDataValues) {
       notifConfigs.push(new Notification(dataColumns));
     }
 
@@ -213,7 +213,6 @@ class Notification {
      * JSON.parse() does this trick for us with its own parser.
      */
     this.notificationText = JSON.parse(`"${configArray[2]}"`);
-    this.admin = configArray[3];
   }
 }
 
@@ -273,10 +272,10 @@ class NotificationManager {
 
                 //Send an email to each Admin.
                 if (emailToName == "admin") {
-                emailBody = this._formatBody(notification.notificationText, requestRow);
-                for (let adminEmail of this._adminEmails) {
+                  emailBody = this._formatBody(notification.notificationText, requestRow);
+                  for (let adminEmail of this._adminEmails) {
                     sendEmail(adminEmail, emailBody);
-                }
+                  }
                 }
                 //Send an email to each assigned sub.
                 else if (emailToName == "assigned subs") {
