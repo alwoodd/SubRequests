@@ -53,17 +53,23 @@ function main() {
   }
 }
 
-function sendEmail(sendTo, body) {
+/**
+ * Send email using MailApp.
+ * @param {string} sendTo 
+ * @param {string} body 
+ * @param {string} status 
+ */
+function sendEmail(sendTo, body, status) {
   const message = {
     to: sendTo,
-    subject: "Substitute Teacher Request Status",
+    subject: "Substitute Teacher Request Status" + ((status == undefined) ? "" : (": " + status)),
     body: body,
     noReply: true
   };
   if (ENABLE_EMAILS) {
     MailApp.sendEmail(message);
   }
-  Logger.log(`Email sent to ${sendTo}: ${body}`);
+  Logger.log(`Email sent to ${sendTo}: subject: ${message.subject}, body: ${message.body}; `);
 }
 
 /**
@@ -274,7 +280,7 @@ class NotificationManager {
                 if (emailToName == "admin") {
                   emailBody = this._formatBody(notification.notificationText, requestRow);
                   for (let adminEmail of this._adminEmails) {
-                    sendEmail(adminEmail, emailBody);
+                    sendEmail(adminEmail, emailBody, notification.status);
                   }
                 }
                 //Send an email to each assigned sub.
@@ -297,7 +303,7 @@ class NotificationManager {
 
                             //Format everything else.
                             emailBody = this._formatBody(emailBody, requestRow);
-                            sendEmail(emailToAddress, emailBody);
+                            sendEmail(emailToAddress, emailBody, notification.status);
                             requestRow.setNotificationSent();
                         }
                         else {
@@ -315,7 +321,7 @@ class NotificationManager {
 
                     emailBody = this._formatStaffNameList(notification.notificationText, staffPeriods);
                     emailBody = this._formatBody(emailBody, requestRow);
-                    sendEmail(emailToAddress, emailBody);
+                    sendEmail(emailToAddress, emailBody, notification.status);
                     requestRow.setNotificationSent();
                 }
                 else {
