@@ -2,101 +2,197 @@ const SUB_SPREADSHEET = "Substitute Teacher Requests";
 const STAFF_SHEET_NAME = "Staff Names";
 const REQUESTS_SHEET_NAME = "Requests";
 const FOLDER = "Sub User Views";
-const EMAIL_COLUMN_NAME = "Email Address";
+const REQUESTER_NAME_COLUMN_NAME = "Requester Name";
 
+const DEBUG_VIEW_SHEET = false; //Set to true to only log each sheet, without actually creating them.
+
+/**
+ * Create a requests view for every staff person in Staff Names.
+ */
 function main() {
   sheetFile = Utilities.findGoogleDocFile(SUB_SPREADSHEET);
   const adminSpreadSheet = SpreadsheetApp.open(sheetFile);
   const staffSheet = adminSpreadSheet.getSheetByName(STAFF_SHEET_NAME);
-  let emailAddresses = [];
+  let staffMembers = [];
   if (staffSheet != null) {
-    emailAddresses = getEmailAddresses(staffSheet)
+    staffMembers = getStaffMembers(staffSheet)
   }
 
-  //Get rows from the REQUESTS_SHEET_NAME.
+  //Get all rows from the REQUESTS_SHEET_NAME.
   const adminSheet = adminSpreadSheet.getSheetByName(REQUESTS_SHEET_NAME);
   const entireRange = adminSheet.getDataRange();
-  const headingRow = entireRange.getValues()[0];
+  const requestHeadingRow = entireRange.getValues()[0];
   //Data range below the header.
   const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, entireRange.getNumColumns());
-  const dataRangeNumRows = dataRange.getNumRows();
-  const dataValues = dataRange.getValues();
+  const requestDataRangeNumRows = dataRange.getNumRows();
+  const requestDataValues = dataRange.getValues();
 
-  //createViewFor() every emailAddress in STAFF_SHEET_NAME.
+  //createViewFor() every staffMember.
   const destinationFolder = findFolder(FOLDER);
   if (destinationFolder != null) {
-    for (let emailAddress of emailAddresses) {
-      createViewFor(destinationFolder, emailAddress, headingRow, dataValues, dataRangeNumRows);
-    }
+      staffMembers.forEach(staffMember => {
+         createViewFor(staffMember, destinationFolder, requestHeadingRow, requestDataValues, requestDataRangeNumRows);
+      });
   }
 }
 
-function createViewFor(destinationFolder, currentUserEmail, headingRow, dataValues, dataRangeNumRows) {
-  const emailColumnNum = headingRow.indexOf(EMAIL_COLUMN_NAME);
-  if (emailColumnNum == -1) {
-    Logger.log(`${EMAIL_COLUMN_NAME} not found in headingRow!`);
+/**
+ * Create a sheet for the passed staffMember, containing just their requests.
+ * @param {StaffMember} staffMember 
+ * @param {Folder} destinationFolder 
+ * @param {string[]} requestHeadingRow 
+ * @param {object[][]} requestDataValues 
+ * @param {number} requestDataRangeNumRows 
+ */
+function createViewFor(staffMember, destinationFolder, requestHeadingRow, requestDataValues, requestDataRangeNumRows) {
+  const requesterNameColumnNum = requestHeadingRow.indexOf(REQUESTER_NAME_COLUMN_NAME);
+  if (requesterNameColumnNum == -1) {
+    Logger.log(`${REQUESTER_NAME_COLUMN_NAME} not found in headingRow!`);
     return;
   }
 
-  const userSpreadSheetName = "Sub Requests for " + currentUserEmail;
-  let sheetFile = Utilities.findGoogleDocFile(userSpreadSheetName);
-  let myViewSpreadSheet;
+  const myViewSheet = createOrOpenViewSheet(staffMember, destinationFolder);
 
-  //If we didn't find userSpreadSheetName, create it.
-  if (sheetFile == null) {
-    Logger.log(`Creating new file for ${currentUserEmail}.`);
-    myViewSpreadSheet = SpreadsheetApp.create(userSpreadSheetName);
-    sheetFile = DriveApp.getFileById(myViewSpreadSheet.getId());
-    //Google automatically notifies a is user when they are added as a viewer.
-    sheetFile.addViewer(currentUserEmail);
-    sheetFile.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
-    sheetFile.moveTo(destinationFolder);
-  }
-  //Else we found userSpreadSheetName. Just open it.
-  else {
-    Logger.log(`Opening existing file for ${currentUserEmail}.`);
-    myViewSpreadSheet = SpreadsheetApp.open(sheetFile);
-  }
-  const myViewSheet = myViewSpreadSheet.getSheetByName("Sheet1");
   myViewSheet.clear();
 
   //Heading row
-  myViewSheet.appendRow(headingRow);
+  myViewSheet.appendRow(requestHeadingRow);
   //Process data rows
-  for (let rowNum = 0; rowNum < dataRangeNumRows; rowNum++) {
-    if (dataValues[rowNum][emailColumnNum] == currentUserEmail)
-    myViewSheet.appendRow(dataValues[rowNum]);
+  for (let rowNum = 0; rowNum < requestDataRangeNumRows; rowNum++) {
+    if (requestDataValues[rowNum][requesterNameColumnNum] == staffMember.fullName)
+    myViewSheet.appendRow(requestDataValues[rowNum]);
   }
 
-  const shortCutVerbiage = "Save a short to this sheet with File > Add shortcut to Drive, then select a destination."
+  const shortCutVerbiage = "Save a shortcut to this sheet with File > Add shortcut to Drive, then select a destination."
   let separater = "-".padStart(shortCutVerbiage.length, "-");
   myViewSheet.appendRow([separater]);
   myViewSheet.appendRow([shortCutVerbiage]);
   myViewSheet.appendRow([' ']);
-  myViewSheet.appendRow([`(Sheet last updated ${new Date(Date.now()).toLocaleString()})`])
+  myViewSheet.appendRow([`(Sheet last updated ${new Date(Date.now()).toLocaleString()})`]);
+
+  logViewSheet(staffMember, myViewSheet);
 }
 
-function getEmailAddresses(sheet) {
-  let emailAddresses = [];
+/**
+ * If DEBUG_VIEW_SHEET, returns an instance of MockSheet.
+ * Otherwise, creates a Sheet if the staffMember's sheet doesn't exist, or
+ * opens the existing Sheet if it does exist.
+ * @param {StaffMember} staffMember 
+ * @param {Folder} destinationFolder 
+ * @returns Sheet | MockSheet
+ */
+function createOrOpenViewSheet(staffMember, destinationFolder) {
+    let myViewSheet;
 
-  const entireRange = sheet.getDataRange();
-  const headingRow = entireRange.getValues()[0];
+    const userSpreadSheetName = "Sub Requests for " + staffMember.fullName;
+
+    if (DEBUG_VIEW_SHEET) {
+        myViewSheet =  new MockSheet();
+    }
+    else {
+        let viewSheetFile = Utilities.findGoogleDocFile(userSpreadSheetName);
+        let myViewSpreadSheet;
+
+        //If we didn't find userSpreadSheetName, create it.
+        if (viewSheetFile == null) {
+            Logger.log(`Creating new file for ${staffMember.fullName}.`);
+            myViewSpreadSheet = SpreadsheetApp.create(userSpreadSheetName);
+            viewSheetFile = DriveApp.getFileById(myViewSpreadSheet.getId());
+            //Google automatically notifies a is user when they are added as a viewer.
+            viewSheetFile.addViewer(staffMember.email);
+            viewSheetFile.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE);
+            viewSheetFile.moveTo(destinationFolder);
+        }
+        //Else we found userSpreadSheetName. Just open it.
+        else {
+            Logger.log(`Opening existing file for ${staffMember.fullName}.`);
+            myViewSpreadSheet = SpreadsheetApp.open(viewSheetFile);
+        }
+        
+        myViewSheet = myViewSpreadSheet.getSheetByName("Sheet1");
+    }
+
+    return myViewSheet;
+}
+
+/**
+ * Logs an instance of a MockSheet so that the entire sheet content is in a single Logger.log() output.
+ * Doesn't do anything if DEBUG_VIEW_SHEET is false.
+ * @param {StaffMember} staffMember 
+ * @param {MockSheet} viewSheet 
+ */
+function logViewSheet(staffMember, viewSheet) {
+    if (DEBUG_VIEW_SHEET) {
+        Logger.log(`Sheet for ${staffMember.fullName}`);
+        let lineNumber = 0;
+        let wholeSheet = viewSheet.getValues().map(row => {
+            lineNumber++;
+            return lineNumber + ") " + row;
+        });
+        wholeSheet = wholeSheet.join("\n");
+        Logger.log(wholeSheet);
+    }
+}
+
+/**
+ * Converts the passed Staff Names Sheet into a StaffMember[].
+ * @param {Sheet} staffSheet 
+ * @returns StaffMember[]
+ */
+function getStaffMembers(staffSheet) {
+  const entireRange = staffSheet.getDataRange();
   //Data range below the header.
   const dataRange = entireRange.offset(1, 0, entireRange.getNumRows() - 1, entireRange.getNumColumns());
   const dataValues = dataRange.getValues();
 
-  const emailColumnNum = headingRow.indexOf(EMAIL_COLUMN_NAME);
-  if (emailColumnNum != -1) {
-    emailAddresses = dataValues.map(colValue => colValue[emailColumnNum]);
-    Logger.log(`Email addresses found: ${emailAddresses}`);
-  }
-  else {
-    Logger.log(`${EMAIL_COLUMN_NAME} not found!`);
-  }
+  const staffMembers = dataValues.map(colValues => new StaffMember(colValues));
 
-  return emailAddresses;
+  return staffMembers;
 }
 
+/**
+ * Represents an individual Staff Member.
+ */
+class StaffMember {
+  constructor(columnArray) {
+    this.firstName = columnArray[0];
+    this.lastName = columnArray[1];
+    this.email = columnArray[2];
+    this.fullName = this.firstName + " " + this.lastName;
+  }
+}
+
+/**
+ * A mock Sheet that implements only the required Sheet methods.
+ * Can be used in lieu of an actual Google Sheet instance.
+ */
+class MockSheet {
+    constructor() {
+        this._array = [];
+    }
+
+    clear() {
+        //do nothing
+    }
+
+    appendRow(data) {
+        this._array.push(data);
+    }
+
+   /**
+    * This method doesn't actually exist in the Google Sheet class.
+    * @returns 
+    */
+    getValues() {
+        return this._array;
+    }
+}
+
+/**
+ * Returns Folder instance for the passed folderName.
+ * @param {string} folderName 
+ * @returns Folder
+ */
 function findFolder(folderName) {
   const folders = DriveApp.getFoldersByName(folderName);
 
